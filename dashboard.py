@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -23,7 +21,7 @@ def load_data():
         df[numerical_cols] = df[numerical_cols].fillna(0)
         return df
     except FileNotFoundError:
-        st.error(f"Error: The file '{file_path}' was not found.")
+        st.error(f"Error: The file '{file_path}' was not found. Please ensure it's in the same directory as the app.")
         st.stop()
 
 summary_df = load_data()
@@ -50,9 +48,9 @@ selected_plan = st.sidebar.multiselect(
 )
 
 # Volatility slider to filter by risk level
-max_vol = summary_df["Ann_Volatility"].max()
+max_vol = summary_df["Ann_Volatility"].max() if not summary_df["Ann_Volatility"].empty else 1.0
 volatility_range = st.sidebar.slider(
-    "Filter by Annualized Volatility (Risk)", 0.0, max_vol, (0.0, max_vol)
+    "Filter by Annualized Volatility (Risk)", 0.0, float(max_vol), (0.0, float(max_vol))
 )
 
 # Apply all filters
@@ -63,6 +61,17 @@ filtered_df = summary_df[
     (summary_df["Ann_Volatility"] >= volatility_range[0]) &
     (summary_df["Ann_Volatility"] <= volatility_range[1])
 ]
+
+# --- MODIFIED SECTION: Data cleaning just before plotting ---
+# Re-coerces data types to numeric after filtering
+filtered_df['Ann_Volatility'] = pd.to_numeric(filtered_df['Ann_Volatility'], errors='coerce')
+filtered_df['Ann_Return_pct'] = pd.to_numeric(filtered_df['Ann_Return_pct'], errors='coerce')
+filtered_df['CAGR_5Y_pct'] = pd.to_numeric(filtered_df['CAGR_5Y_pct'], errors='coerce')
+filtered_df['Sharpe'] = pd.to_numeric(filtered_df['Sharpe'], errors='coerce')
+
+# Fills any remaining NaNs with 0
+filtered_df = filtered_df.fillna(0)
+# -----------------------------------------------------------
 
 # ---------------- Main Dashboard Layout ----------------
 st.header("Key Performance Indicators")
@@ -78,7 +87,6 @@ st.markdown("---")
 # ---------------- Visualizations Section ----------------
 st.header("Visual Analysis")
 
-# Use an expander for charts to keep the dashboard clean
 with st.expander("Explore Charts", expanded=True):
     col_vis1, col_vis2 = st.columns(2)
 
@@ -107,9 +115,9 @@ with st.expander("Explore Charts", expanded=True):
         st.plotly_chart(fig_pie, use_container_width=True)
 
     st.markdown("---")
-
+    
     col_vis3, col_vis4 = st.columns(2)
-
+    
     with col_vis3:
         # Bar chart: Average Sharpe Ratio by Category
         st.subheader("Average Sharpe Ratio by Category")
