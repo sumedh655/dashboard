@@ -12,7 +12,7 @@ st.set_page_config(layout="wide", page_title="Indian Mutual Funds Dashboard", pa
 @st.cache_data
 def load_data():
     """Loads the master summary CSV and performs initial data cleaning."""
-    file_path = "master_summary.csv"
+    file_path = "C:\Users\adity\OneDrive\Desktop\mtp_dashboard\master_summary.csv""master_summary.csv"
     try:
         df = pd.read_csv(file_path)
         # Fill NaN values with 0 for numerical columns to prevent errors
