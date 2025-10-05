@@ -11,7 +11,7 @@ from sklearn.decomposition import PCA
 
 st.set_page_config(page_title="MF Quality Lab", layout="wide")
 
-# Updated line with the correct relative path
+# Default CSV path
 DATA_PATH_DEFAULT = "master_summary.csv"
 
 @st.cache_data(show_spinner=False)
@@ -27,18 +27,17 @@ def load_data(path: str):
         if "Start_Date" in df.columns and "End_Date" in df.columns:
             age_days = (df["End_Date"] - df["Start_Date"]).dt.days
             df["Fund_Age_Yrs"] = age_days / 365.25
+    # Normalize drawdown sign / magnitude
     if "Max_Drawdown_pct" in df.columns:
         s = df["Max_Drawdown_pct"]
-        if s.dropna().mean() < 0:
+        if s.dropna().size and s.dropna().mean() < 0:
             df["MaxDD_mag_pct"] = s.abs()
         else:
             df["MaxDD_mag_pct"] = s
-    if "Category" in df.columns:
-        df["Category"] = df["Category"].astype(str).str.strip()
-    if "AMC" in df.columns:
-        df["AMC"] = df["AMC"].astype(str).str.strip()
-    if "Fund_Name" in df.columns:
-        df["Fund_Name"] = df["Fund_Name"].astype(str).str.strip()
+    # Trim whitespace on common text cols
+    for tcol in ["Category", "AMC", "Fund_Name", "Type"]:
+        if tcol in df.columns:
+            df[tcol] = df[tcol].astype(str).str.strip()
     horizons = [c for c in ["CAGR_1Y_pct","CAGR_3Y_pct","CAGR_5Y_pct","CAGR_10Y_pct"] if c in df.columns]
     return df, horizons
 
@@ -47,6 +46,7 @@ def pct_rank(s: pd.Series):
 
 def build_quality_scores(dfi: pd.DataFrame, horizons, w):
     sc = pd.DataFrame(index=dfi.index)
+    # return strength
     if horizons:
         R = pd.DataFrame({h: pct_rank(dfi[h]) for h in horizons})
         sc["return_strength"] = R.mean(axis=1)
@@ -54,23 +54,28 @@ def build_quality_scores(dfi: pd.DataFrame, horizons, w):
         sc["return_strength"] = pct_rank(dfi["Ann_Return_pct"])
     else:
         sc["return_strength"] = 0.0
+    # low volatility
     if "Ann_Volatility" in dfi.columns:
         sc["low_vol"] = 1 - pct_rank(dfi["Ann_Volatility"])
     else:
         sc["low_vol"] = 0.0
+    # low drawdown
     dd_col = "MaxDD_mag_pct" if "MaxDD_mag_pct" in dfi.columns else ("Max_Drawdown_pct" if "Max_Drawdown_pct" in dfi.columns else None)
     if dd_col is not None:
         sc["low_dd"] = 1 - pct_rank(dfi[dd_col])
     else:
         sc["low_dd"] = 0.0
+    # sharpe
     if "Sharpe" in dfi.columns:
         sc["sharpe"] = pct_rank(dfi["Sharpe"])
     else:
         sc["sharpe"] = 0.0
+    # age bonus
     if "Fund_Age_Yrs" in dfi.columns:
         sc["age_bonus"] = pct_rank(dfi["Fund_Age_Yrs"])
     else:
         sc["age_bonus"] = 0.0
+    # since inception CAGR
     if "CAGR_since_pct" in dfi.columns:
         sc["since_incep"] = pct_rank(dfi["CAGR_since_pct"])
     else:
@@ -92,8 +97,8 @@ def category_medians(df, cols, by="Category"):
     med = df.groupby(by)[cols].median(numeric_only=True).reset_index()
     return med
 
+# Sidebar controls
 st.sidebar.title("⚙️ Controls")
-
 data_path = st.sidebar.text_input("CSV path", DATA_PATH_DEFAULT)
 df, horizons = load_data(data_path)
 
@@ -125,6 +130,7 @@ w = {
     "w_since":  st.sidebar.slider("Since inception CAGR", 0.0, 5.0, 0.5, 0.1),
 }
 
+# Filtering
 fil = pd.Series(True, index=df.index)
 if sel_amc:
     fil &= df["AMC"].isin(sel_amc)
@@ -139,11 +145,12 @@ if "Sharpe" in df.columns:
 
 dff = df[fil].copy()
 
-# Add a check for an empty DataFrame
+# Compute scores if we have rows
 if not dff.empty:
     scores = build_quality_scores(dff, horizons, w)
     dff = pd.concat([dff.reset_index(drop=True), scores.reset_index(drop=True)], axis=1)
 
+# Page
 st.title("📊 Mutual Fund Quality Lab (Streamlit)")
 st.caption("Goes beyond common aggregators with risk-adjusted, consistency, and clustering views.")
 
@@ -194,16 +201,40 @@ with tab_quadrant:
             size = st.selectbox("Bubble size", [c for c in ["MaxDD_mag_pct","Ann_Volatility"] if c in dff.columns] + [None], index=0)
 
             df_plot = dff.copy()
+            # If a size column is chosen, drop rows where size is NaN (Plotly doesn't accept NaN sizes)
             if size is not None and size in df_plot.columns:
-                df_plot = df_plot.dropna(subset=[size])  # remove NaNs in size column
-
-            fig = px.scatter(df_plot, x=x, y=y, color=color,
-                             hover_data=["Fund_Name","AMC","Category"] if {"Fund_Name","AMC","Category"}.issubset(df_plot.columns) else None,
-                             size=size, title=f"{y} vs {x}")
-            if x_med is not None and y_med is not None:
-                fig.add_hline(y=y_med, line_dash="dash", line_width=1)
-                fig.add_vline(x=x_med, line_dash="dash", line_width=1)
-            st.plotly_chart(fig, width="stretch")
+                df_plot = df_plot.dropna(subset=[size])
+                # If we dropped everything, notify user
+                if df_plot.empty:
+                    st.info("All selected rows have NaN for the chosen bubble size. Try a different size or remove the size.")
+                else:
+                    fig = px.scatter(
+                        df_plot,
+                        x=x,
+                        y=y,
+                        color=color,
+                        hover_data=["Fund_Name","AMC","Category"] if {"Fund_Name","AMC","Category"}.issubset(df_plot.columns) else None,
+                        size=size,
+                        title=f"{y} vs {x}"
+                    )
+                    if x_med is not None and y_med is not None:
+                        fig.add_hline(y=y_med, line_dash="dash", line_width=1)
+                        fig.add_vline(x=x_med, line_dash="dash", line_width=1)
+                    st.plotly_chart(fig, width="stretch")
+            else:
+                # No size column chosen
+                fig = px.scatter(
+                    df_plot,
+                    x=x,
+                    y=y,
+                    color=color,
+                    hover_data=["Fund_Name","AMC","Category"] if {"Fund_Name","AMC","Category"}.issubset(df_plot.columns) else None,
+                    title=f"{y} vs {x}"
+                )
+                if x_med is not None and y_med is not None:
+                    fig.add_hline(y=y_med, line_dash="dash", line_width=1)
+                    fig.add_vline(x=x_med, line_dash="dash", line_width=1)
+                st.plotly_chart(fig, width="stretch")
 
             if x_med is not None and y_med is not None:
                 q = pd.DataFrame({"x": dff[x], "y": dff[y]})
@@ -255,10 +286,16 @@ with tab_drawdown:
             yopt = [c for c in ["CAGR_5Y_pct","CAGR_10Y_pct","Ann_Return_pct","CAGR_since_pct"] if c in dff.columns]
             if yopt:
                 yy = st.selectbox("Compounding metric", yopt, index=0, key="dd_y")
-                fig = px.scatter(dff, x="MaxDD_mag_pct", y=yy, color="Category" if "Category" in dff.columns else None,
-                                 hover_data=["Fund_Name","AMC","Category"] if {"Fund_Name","AMC","Category"}.issubset(dff.columns) else None,
-                                 title=f"{yy} vs Max Drawdown (magnitude %)")
+                fig = px.scatter(
+                    dff.dropna(subset=["MaxDD_mag_pct", yy]),
+                    x="MaxDD_mag_pct",
+                    y=yy,
+                    color="Category" if "Category" in dff.columns else None,
+                    hover_data=["Fund_Name","AMC","Category"] if {"Fund_Name","AMC","Category"}.issubset(dff.columns) else None,
+                    title=f"{yy} vs Max Drawdown (magnitude %)"
+                )
                 st.plotly_chart(fig, width="stretch")
+
                 tmp = dff.dropna(subset=["MaxDD_mag_pct", yy]).copy()
                 tmp.sort_values(["MaxDD_mag_pct", yy], ascending=[True, False], inplace=True)
                 frontier = []
@@ -299,4 +336,58 @@ with tab_clusters:
                 coords = p.fit_transform(Xs)
                 work["pc1"] = coords[:,0]
                 work["pc2"] = coords[:,1]
-                fig = px.scatter(work, x="pc1", y="pc2", color="cluster", hover_data=["Fund_Name","AMC","Category"] if {"Fund_Name","AMC","Category"}.issubset(work.columns) else
+                fig = px.scatter(
+                    work,
+                    x="pc1",
+                    y="pc2",
+                    color="cluster",
+                    hover_data=["Fund_Name","AMC","Category"] if {"Fund_Name","AMC","Category"}.issubset(work.columns) else None,
+                    title="Clusters (PCA projection)"
+                )
+                st.plotly_chart(fig, width="stretch")
+                prof = work.groupby("cluster")[feats].median().reset_index()
+                st.write("Cluster median profiles")
+                st.dataframe(prof, width="stretch", hide_index=True)
+            else:
+                st.info("Not enough rows after dropping NaNs for the chosen features.")
+        else:
+            st.info("Pick at least one feature.")
+
+with tab_compare:
+    if dff.empty:
+        st.info("No funds match the selected filters. Please adjust your selections.")
+    else:
+        st.subheader("Compare Selected Funds (Radar)")
+        fund_options = dff["Fund_Name"].unique().tolist() if "Fund_Name" in dff.columns else []
+        default_pick = fund_options[:3] if fund_options else []
+        chosen = st.multiselect("Select up to 5 funds", fund_options, default=default_pick)
+        radar_feats = [c for c in ["CAGR_3Y_pct","CAGR_5Y_pct","Sharpe","Ann_Volatility","MaxDD_mag_pct","CAGR_10Y_pct"] if c in dff.columns]
+        if chosen and radar_feats:
+            sub = dff[dff["Fund_Name"].isin(chosen)].dropna(subset=radar_feats).copy()
+            if len(sub) >= 1:
+                # normalize to full universe for comparability
+                denom = (dff[radar_feats].max() - dff[radar_feats].min() + 1e-9)
+                norm = (sub[radar_feats] - dff[radar_feats].min()) / denom
+                fig = go.Figure()
+                for _, row in norm.iterrows():
+                    name = sub.loc[row.name, "Fund_Name"] if "Fund_Name" in sub.columns else str(row.name)
+                    fig.add_trace(go.Scatterpolar(r=row[radar_feats].values, theta=radar_feats, fill="toself", name=name))
+                fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0,1])), showlegend=True, title="Radar (normalized to universe)")
+                st.plotly_chart(fig, width="stretch")
+            else:
+                st.info("Selected funds have missing values on chosen metrics.")
+        else:
+            if not radar_feats:
+                st.info("No suitable metrics present for radar comparison.")
+
+with tab_table:
+    if dff.empty:
+        st.info("No funds match the selected filters. Please adjust your selections.")
+    else:
+        st.subheader("Filtered Data + Scores")
+        show_cols = [c for c in ["Scheme_Code","Fund_Name","AMC","Category","Type","Fund_Age_Yrs","Ann_Volatility","Ann_Return_pct","Sharpe","Max_Drawdown_pct","MaxDD_mag_pct","ROI_abs_pct","CAGR_since_pct","CAGR_1Y_pct","CAGR_3Y_pct","CAGR_5Y_pct","CAGR_10Y_pct","quality_score"] if c in dff.columns]
+        st.dataframe(dff[show_cols].sort_values("quality_score", ascending=False).reset_index(drop=True), width="stretch", hide_index=True)
+        st.download_button("⬇️ Download filtered data + scores (CSV)", data=dff[show_cols].to_csv(index=False).encode("utf-8"), file_name="filtered_with_scores.csv", mime="text/csv")
+
+st.markdown("---")
+st.markdown("**Tip:** Tune the weights to reflect your preference for stability (low vol & low drawdown) vs aggressive compounding (returns & Sharpe).")
