@@ -161,7 +161,9 @@ with tab_overview:
             n_funds = len(dff)
             st.metric("Funds (filtered)", n_funds)
             if "Category" in dff.columns:
-                cat_counts = dff["Category"].value_counts().reset_index(names=["Category","Count"])
+                # Corrected line: 'names' changed to 'name', and the new index column is renamed
+                cat_counts = dff["Category"].value_counts().reset_index(name="Count")
+                cat_counts = cat_counts.rename(columns={'index': 'Category'})
                 fig = px.bar(cat_counts, x="Category", y="Count", title="Funds per Category")
                 st.plotly_chart(fig, use_container_width=True)
         with right:
