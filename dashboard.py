@@ -71,6 +71,9 @@ filtered_df['Sharpe'] = pd.to_numeric(filtered_df['Sharpe'], errors='coerce')
 
 # Fills any remaining NaNs with 0
 filtered_df = filtered_df.fillna(0)
+
+# Make sure the CAGR column for size is non-negative
+filtered_df['CAGR_5Y_pct_abs'] = np.abs(filtered_df['CAGR_5Y_pct'])
 # -----------------------------------------------------------
 
 # ---------------- Main Dashboard Layout ----------------
@@ -95,7 +98,7 @@ with st.expander("Explore Charts", expanded=True):
         st.subheader("Risk vs Return (Ann. Return vs Volatility)")
         fig_scatter = px.scatter(
             filtered_df, x="Ann_Volatility", y="Ann_Return_pct",
-            size="CAGR_5Y_pct", color="Category", hover_name="Fund_Name",
+            size="CAGR_5Y_pct_abs", color="Category", hover_name="Fund_Name",
             title="Annualized Return vs Volatility by Category",
             labels={'Ann_Volatility': 'Annualized Volatility', 'Ann_Return_pct': 'Annualized Return (%)'}
         )
